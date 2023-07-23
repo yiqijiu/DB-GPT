@@ -4,11 +4,11 @@ import uuid
 from langchain.embeddings import HuggingFaceEmbeddings, logger
 
 from pilot.configs.config import Config
-from pilot.configs.model_config import LLM_MODEL_CONFIG
+from pilot.configs.model_config import LLM_MODEL_CONFIG, KNOWLEDGE_UPLOAD_ROOT_PATH
 from pilot.scene.base import ChatScene
 from pilot.scene.base_chat import BaseChat
-from pilot.source_embedding.knowledge_embedding import KnowledgeEmbedding
-from pilot.source_embedding.string_embedding import StringEmbedding
+from pilot.embedding_engine.embedding_engine import EmbeddingEngine
+from pilot.embedding_engine.string_embedding import StringEmbedding
 from pilot.summary.mysql_db_summary import MysqlSummary
 from pilot.scene.chat_factory import ChatFactory
 
@@ -32,13 +32,16 @@ class DBSummaryClient:
             model_name=LLM_MODEL_CONFIG[CFG.EMBEDDING_MODEL]
         )
         vector_store_config = {
-            "vector_store_name": dbname + "_profile",
+            "vector_store_name": dbname + "_summary",
+            "vector_store_type": CFG.VECTOR_STORE_TYPE,
+            "chroma_persist_path": KNOWLEDGE_UPLOAD_ROOT_PATH,
             "embeddings": embeddings,
         }
         embedding = StringEmbedding(
             file_path=db_summary_client.get_summery(),
             vector_store_config=vector_store_config,
         )
+        self.init_db_profile(db_summary_client, dbname, embeddings)
         if not embedding.vector_name_exist():
             if CFG.SUMMARY_CONFIG == "FAST":
                 for vector_table_info in db_summary_client.get_summery():
@@ -59,6 +62,8 @@ class DBSummaryClient:
             ) in db_summary_client.get_table_summary().items():
                 table_vector_store_config = {
                     "vector_store_name": dbname + "_" + table_name + "_ts",
+                    "vector_store_type": CFG.VECTOR_STORE_TYPE,
+                    "chroma_persist_path": KNOWLEDGE_UPLOAD_ROOT_PATH,
                     "embeddings": embeddings,
                 }
                 embedding = StringEmbedding(
@@ -69,12 +74,29 @@ class DBSummaryClient:
 
         logger.info("db summary embedding success")
 
+    def get_db_summary(self, dbname, query, topk):
+        vector_store_config = {
+            "vector_store_name": dbname + "_profile",
+            "vector_store_type": CFG.VECTOR_STORE_TYPE,
+            "chroma_persist_path": KNOWLEDGE_UPLOAD_ROOT_PATH,
+        }
+        knowledge_embedding_client = EmbeddingEngine(
+            model_name=LLM_MODEL_CONFIG[CFG.EMBEDDING_MODEL],
+            vector_store_config=vector_store_config,
+        )
+        table_docs = knowledge_embedding_client.similar_search(query, topk)
+        ans = [d.page_content for d in table_docs]
+        return ans
+
     def get_similar_tables(self, dbname, query, topk):
         """get user query related tables info"""
         vector_store_config = {
-            "vector_store_name": dbname + "_profile",
+            "vector_store_name": dbname + "_summary",
+            "chroma_persist_path": KNOWLEDGE_UPLOAD_ROOT_PATH,
+            "vector_store_type": CFG.VECTOR_STORE_TYPE,
+            "chroma_persist_path": KNOWLEDGE_UPLOAD_ROOT_PATH,
         }
-        knowledge_embedding_client = KnowledgeEmbedding(
+        knowledge_embedding_client = EmbeddingEngine(
             model_name=LLM_MODEL_CONFIG[CFG.EMBEDDING_MODEL],
             vector_store_config=vector_store_config,
         )
@@ -96,9 +118,11 @@ class DBSummaryClient:
         for table in related_tables:
             vector_store_config = {
                 "vector_store_name": dbname + "_" + table + "_ts",
+                "chroma_persist_path": KNOWLEDGE_UPLOAD_ROOT_PATH,
+                "vector_store_type": CFG.VECTOR_STORE_TYPE,
+                "chroma_persist_path": KNOWLEDGE_UPLOAD_ROOT_PATH,
             }
-            knowledge_embedding_client = KnowledgeEmbedding(
-                file_path="",
+            knowledge_embedding_client = EmbeddingEngine(
                 model_name=LLM_MODEL_CONFIG[CFG.EMBEDDING_MODEL],
                 vector_store_config=vector_store_config,
             )
@@ -111,6 +135,29 @@ class DBSummaryClient:
         dbs = db.get_database_list()
         for dbname in dbs:
             self.db_summary_embedding(dbname)
+
+    def init_db_profile(self, db_summary_client, dbname, embeddings):
+        profile_store_config = {
+            "vector_store_name": dbname + "_profile",
+            "chroma_persist_path": KNOWLEDGE_UPLOAD_ROOT_PATH,
+            "vector_store_type": CFG.VECTOR_STORE_TYPE,
+            "embeddings": embeddings,
+        }
+        embedding = StringEmbedding(
+            file_path=db_summary_client.get_db_summery(),
+            vector_store_config=profile_store_config,
+        )
+        if not embedding.vector_name_exist():
+            docs = []
+            docs.extend(embedding.read_batch())
+            for table_summary in db_summary_client.table_info_json():
+                embedding = StringEmbedding(
+                    table_summary,
+                    profile_store_config,
+                )
+                docs.extend(embedding.read_batch())
+            embedding.index_to_store(docs)
+        logger.info("init db profile success...")
 
 
 def _get_llm_response(query, db_input, dbsummary):

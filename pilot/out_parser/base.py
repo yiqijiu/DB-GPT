@@ -32,7 +32,7 @@ class BaseOutputParser(ABC):
     Output parsers help structure language model responses.
     """
 
-    def __init__(self, sep: str, is_stream_out: bool):
+    def __init__(self, sep: str, is_stream_out: bool = True):
         self.sep = sep
         self.is_stream_out = is_stream_out
 
@@ -47,12 +47,21 @@ class BaseOutputParser(ABC):
         return code
 
     def parse_model_stream_resp_ex(self, chunk, skip_echo_len):
+        if b"\0" in chunk:
+            chunk = chunk.replace(b"\0", b"")
         data = json.loads(chunk.decode())
 
         """ TODO Multi mode output handler,  rewrite this for multi model, use adapter mode.
         """
-        if data["error_code"] == 0:
-            if "vicuna" in CFG.LLM_MODEL:
+        model_context = data.get("model_context")
+        if model_context and "prompt_echo_len_char" in model_context:
+            prompt_echo_len_char = int(model_context.get("prompt_echo_len_char", -1))
+            if prompt_echo_len_char != -1:
+                skip_echo_len = prompt_echo_len_char
+
+        if data.get("error_code", 0) == 0:
+            if "vicuna" in CFG.LLM_MODEL or "llama-2" in CFG.LLM_MODEL:
+                # TODO Judging from model_context
                 # output = data["text"][skip_echo_len + 11:].strip()
                 output = data["text"][skip_echo_len:].strip()
             elif "guanaco" in CFG.LLM_MODEL:
@@ -93,31 +102,79 @@ class BaseOutputParser(ABC):
                     yield output
 
     def parse_model_nostream_resp(self, response, sep: str):
-        text = response.text.strip()
-        text = text.rstrip()
-        text = text.lower()
-        respObj = json.loads(text)
-
-        xx = respObj["response"]
-        xx = xx.strip(b"\x00".decode())
-        respObj_ex = json.loads(xx)
-        if respObj_ex["error_code"] == 0:
-            all_text = respObj_ex["text"]
+        resp_obj_ex = json.loads(response)
+        if isinstance(resp_obj_ex, str):
+            resp_obj_ex = json.loads(resp_obj_ex)
+        if resp_obj_ex["error_code"] == 0:
+            all_text = resp_obj_ex["text"]
             ### 解析返回文本，获取AI回复部分
-            tmpResp = all_text.split(sep)
+            tmp_resp = all_text.split(sep)
             last_index = -1
-            for i in range(len(tmpResp)):
-                if tmpResp[i].find("assistant:") != -1:
+            for i in range(len(tmp_resp)):
+                if tmp_resp[i].find("assistant:") != -1:
                     last_index = i
-            ai_response = tmpResp[last_index]
+            ai_response = tmp_resp[last_index]
             ai_response = ai_response.replace("assistant:", "")
-            ai_response = ai_response.replace("\n", "")
+            ai_response = ai_response.replace("Assistant:", "")
+            ai_response = ai_response.replace("ASSISTANT:", "")
+            ai_response = ai_response.replace("\n", " ")
             ai_response = ai_response.replace("\_", "_")
             ai_response = ai_response.replace("\*", "*")
+            ai_response = ai_response.replace("\t", "")
             print("un_stream ai response:", ai_response)
             return ai_response
         else:
-            raise ValueError("Model server error!code=" + respObj_ex["error_code"])
+            raise ValueError("Model server error!code=" + resp_obj_ex["error_code"])
+
+    def __illegal_json_ends(self, s):
+        temp_json = s
+        illegal_json_ends_1 = [", }", ",}"]
+        illegal_json_ends_2 = ", ]", ",]"
+        for illegal_json_end in illegal_json_ends_1:
+            temp_json = temp_json.replace(illegal_json_end, " }")
+        for illegal_json_end in illegal_json_ends_2:
+            temp_json = temp_json.replace(illegal_json_end, " ]")
+        return temp_json
+
+    def __extract_json(self, s):
+        temp_json = self.__json_interception(s, True)
+        if not temp_json:
+            temp_json = self.__json_interception(s)
+        try:
+            temp_json = self.__illegal_json_ends(temp_json)
+            return temp_json
+        except Exception as e:
+            raise ValueError("Failed to find a valid json response！" + temp_json)
+
+    def __json_interception(self, s, is_json_array: bool = False):
+        if is_json_array:
+            i = s.find("[")
+            if i < 0:
+                return None
+            count = 1
+            for j, c in enumerate(s[i + 1 :], start=i + 1):
+                if c == "]":
+                    count -= 1
+                elif c == "[":
+                    count += 1
+                if count == 0:
+                    break
+            assert count == 0
+            return s[i : j + 1]
+        else:
+            i = s.find("{")
+            if i < 0:
+                return None
+            count = 1
+            for j, c in enumerate(s[i + 1 :], start=i + 1):
+                if c == "}":
+                    count -= 1
+                elif c == "{":
+                    count += 1
+                if count == 0:
+                    break
+            assert count == 0
+            return s[i : j + 1]
 
     def parse_prompt_response(self, model_out_text) -> T:
         """
@@ -129,8 +186,8 @@ class BaseOutputParser(ABC):
 
         """
         cleaned_output = model_out_text.rstrip()
-        # if "```json" in cleaned_output:
-        #     _, cleaned_output = cleaned_output.split("```json")
+        if "```json" in cleaned_output:
+            _, cleaned_output = cleaned_output.split("```json")
         # if "```" in cleaned_output:
         #     cleaned_output, _ = cleaned_output.split("```")
         if cleaned_output.startswith("```json"):
@@ -141,20 +198,15 @@ class BaseOutputParser(ABC):
             cleaned_output = cleaned_output[: -len("```")]
         cleaned_output = cleaned_output.strip()
         if not cleaned_output.startswith("{") or not cleaned_output.endswith("}"):
-            logger.info("illegal json processing")
-            json_pattern = r"{(.+?)}"
-            m = re.search(json_pattern, cleaned_output)
-            if m:
-                cleaned_output = m.group(0)
-            else:
-                raise ValueError("model server out not fllow the prompt!")
+            logger.info("illegal json processing:\n" + cleaned_output)
+            cleaned_output = self.__extract_json(cleaned_output)
         cleaned_output = (
             cleaned_output.strip()
-            .replace("\n", "")
-            .replace("\\n", "")
-            .replace("\\", "")
-            .replace("\\", "")
+            .replace("\n", " ")
+            .replace("\\n", " ")
+            .replace("\\", " ")
         )
+        cleaned_output = self.__illegal_json_ends(cleaned_output)
         return cleaned_output
 
     def parse_view_response(self, ai_text, data) -> str:

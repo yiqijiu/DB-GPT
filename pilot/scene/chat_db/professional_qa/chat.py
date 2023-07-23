@@ -15,17 +15,13 @@ CFG = Config()
 
 
 class ChatWithDbQA(BaseChat):
-    chat_scene: str = ChatScene.ChatWithDbQA.value
+    chat_scene: str = ChatScene.ChatWithDbQA.value()
 
     """Number of results to return from the query"""
 
-    def __init__(
-        self, temperature, max_new_tokens, chat_session_id, db_name, user_input
-    ):
+    def __init__(self, chat_session_id, db_name, user_input):
         """ """
         super().__init__(
-            temperature=temperature,
-            max_new_tokens=max_new_tokens,
             chat_mode=ChatScene.ChatWithDbQA,
             chat_session_id=chat_session_id,
             current_user_input=user_input,
@@ -52,7 +48,7 @@ class ChatWithDbQA(BaseChat):
             raise ValueError("Could not import DBSummaryClient. ")
         if self.db_name:
             client = DBSummaryClient()
-            table_info = client.get_similar_tables(
+            table_info = client.get_db_summary(
                 dbname=self.db_name, query=self.current_user_input, topk=self.top_k
             )
             # table_info = self.database.table_simple_info(self.db_connect)
@@ -60,11 +56,8 @@ class ChatWithDbQA(BaseChat):
 
         input_values = {
             "input": self.current_user_input,
-            "top_k": str(self.top_k),
-            "dialect": dialect,
+            # "top_k": str(self.top_k),
+            # "dialect": dialect,
             "table_info": table_info,
         }
         return input_values
-
-    def do_with_prompt_response(self, prompt_response):
-        return prompt_response

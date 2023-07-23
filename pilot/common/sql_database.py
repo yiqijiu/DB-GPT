@@ -64,59 +64,7 @@ class Database:
         self._usable_tables = set()
         self._usable_tables = set()
         self._sample_rows_in_table_info = set()
-        # including view support by adding the views as well as tables to the all
-        # tables list if view_support is True
-        # self._all_tables = set(
-        #     self._inspector.get_table_names(schema=schema)
-        #     + (self._inspector.get_view_names(schema=schema) if view_support else [])
-        # )
-
-        # self._include_tables = set(include_tables) if include_tables else set()
-        # if self._include_tables:
-        #     missing_tables = self._include_tables - self._all_tables
-        #     if missing_tables:
-        #         raise ValueError(
-        #             f"include_tables {missing_tables} not found in database"
-        #         )
-        # self._ignore_tables = set(ignore_tables) if ignore_tables else set()
-        # if self._ignore_tables:
-        #     missing_tables = self._ignore_tables - self._all_tables
-        #     if missing_tables:
-        #         raise ValueError(
-        #             f"ignore_tables {missing_tables} not found in database"
-        #         )
-        # usable_tables = self.get_usable_table_names()
-        # self._usable_tables = set(usable_tables) if usable_tables else self._all_tables
-
-        # if not isinstance(sample_rows_in_table_info, int):
-        #     raise TypeError("sample_rows_in_table_info must be an integer")
-        #
-        # self._sample_rows_in_table_info = sample_rows_in_table_info
         self._indexes_in_table_info = indexes_in_table_info
-        #
-        # self._custom_table_info = custom_table_info
-        # if self._custom_table_info:
-        #     if not isinstance(self._custom_table_info, dict):
-        #         raise TypeError(
-        #             "table_info must be a dictionary with table names as keys and the "
-        #             "desired table info as values"
-        #         )
-        #     # only keep the tables that are also present in the database
-        #     intersection = set(self._custom_table_info).intersection(self._all_tables)
-        #     self._custom_table_info = dict(
-        #         (table, self._custom_table_info[table])
-        #         for table in self._custom_table_info
-        #         if table in intersection
-        #     )
-
-        # self._metadata = metadata or MetaData()
-        # # # including view support if view_support = true
-        # self._metadata.reflect(
-        #     views=view_support,
-        #     bind=self._engine,
-        #     only=list(self._usable_tables),
-        #     schema=self._schema,
-        # )
 
     @classmethod
     def from_uri(
@@ -320,6 +268,31 @@ class Database:
             result.insert(0, field_names)
             return result
 
+    def query_ex(self, session, query, fetch: str = "all"):
+        """
+        only for query
+        Args:
+            session:
+            query:
+            fetch:
+        Returns:
+        """
+        print(f"Query[{query}]")
+        if not query:
+            return []
+        cursor = session.execute(text(query))
+        if cursor.returns_rows:
+            if fetch == "all":
+                result = cursor.fetchall()
+            elif fetch == "one":
+                result = cursor.fetchone()[0]  # type: ignore
+            else:
+                raise ValueError("Fetch parameter must be either 'one' or 'all'")
+            field_names = list(i[0:] for i in cursor.keys())
+
+            result = list(result)
+            return field_names, result
+
     def run(self, session, command: str, fetch: str = "all") -> List:
         """Execute a SQL command and return a string representing the results."""
         print("SQL:" + command)
@@ -371,7 +344,14 @@ class Database:
         return [
             d[0]
             for d in results
-            if d[0] not in ["information_schema", "performance_schema", "sys", "mysql"]
+            if d[0]
+            not in [
+                "information_schema",
+                "performance_schema",
+                "sys",
+                "mysql",
+                "knowledge_management",
+            ]
         ]
 
     def convert_sql_write_to_select(self, write_sql):
@@ -442,6 +422,19 @@ class Database:
         cursor = session.execute(text(f"SHOW INDEXES FROM {table_name}"))
         indexes = cursor.fetchall()
         return [(index[2], index[4]) for index in indexes]
+
+    def get_show_create_table(self, table_name):
+        """Get table show create table about specified table."""
+        session = self._db_sessions()
+        cursor = session.execute(text(f"SHOW CREATE TABLE  {table_name}"))
+        ans = cursor.fetchall()
+        res = ans[0][1]
+        res = re.sub(r"\s*ENGINE\s*=\s*InnoDB\s*", " ", res, flags=re.IGNORECASE)
+        res = re.sub(
+            r"\s*DEFAULT\s*CHARSET\s*=\s*\w+\s*", " ", res, flags=re.IGNORECASE
+        )
+        res = re.sub(r"\s*COLLATE\s*=\s*\w+\s*", " ", res, flags=re.IGNORECASE)
+        return res
 
     def get_fields(self, table_name):
         """Get column fields about specified table."""

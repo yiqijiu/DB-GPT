@@ -33,11 +33,11 @@ Currently, we have released multiple key features, which are listed below to dem
 Getting Started
 -----------------
 | How to get started using DB-GPT to interact with your data and environment.
-- `Quickstart Guid <./getting_started/getting_started.html>`_
+- `Quickstart Guide <./getting_started/getting_started.html>`_
 
 | Concepts and terminology
 
-- `Concepts and terminology  <./getting_started/concepts.html>`_
+- `Concepts and Terminology  <./getting_started/concepts.html>`_
 
 | Coming soon...
 
@@ -48,6 +48,7 @@ Getting Started
    :hidden:
 
    getting_started/getting_started.md
+   getting_started/installation.md
    getting_started/concepts.md
    getting_started/tutorials.md
 
@@ -68,9 +69,11 @@ It's very important for DB-GPT, DB-GPT also provide standard, extendable interfa
 
 - `Plugins <./modules/plugins.html>`_: Plugins management, scheduler.
 
-- `Knownledge <./modules/knownledge.html>`_: Knownledge management, embedding, and search.
+- `Knowledge <./modules/knowledge.html>`_: Knowledge management, embedding, and search.
 
 - `Connections <./modules/connections.html>`_: Supported multi databases connection. management connections and interact with this.
+
+- `Vector <./modules/vector.html>`_: Supported multi vector database.
 
 .. toctree::
    :maxdepth: 2
@@ -81,8 +84,9 @@ It's very important for DB-GPT, DB-GPT also provide standard, extendable interfa
    ./modules/llms.md
    ./modules/prompts.md
    ./modules/plugins.md
-   ./modules/connections.md
-   ./modules/knownledge.md
+   ./modules/connections.rst
+   ./modules/knowledge.rst
+   ./modules/vector.rst
 
 Use Cases
 ---------
@@ -125,6 +129,18 @@ Reference
    :hidden:
 
    ./reference.md
+
+FAQ
+-----------
+| DB-GPT FAQ.
+
+.. toctree::
+   :maxdepth: 1
+   :caption: FAQ
+   :name: FAQ
+   :hidden:
+
+   ./faq.md
 
 Ecosystem
 ----------

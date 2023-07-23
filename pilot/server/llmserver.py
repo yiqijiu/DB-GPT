@@ -5,10 +5,13 @@ import asyncio
 import json
 import os
 import sys
+from typing import List
 
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import StreamingResponse
+
+# from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 global_counter = 0
@@ -22,6 +25,7 @@ from pilot.configs.model_config import *
 from pilot.model.llm_out.vicuna_base_llm import get_embeddings
 from pilot.model.loader import ModelLoader
 from pilot.server.chat_adapter import get_llm_chat_adapter
+from pilot.scene.base_message import ModelMessage
 
 CFG = Config()
 
@@ -32,16 +36,20 @@ class ModelWorker:
             model_path = model_path[:-1]
         self.model_name = model_name or model_path.split("/")[-1]
         self.device = device
-
+        print(f"Loading {model_name} LLM ModelServer in {device}! Please Wait......")
         self.ml = ModelLoader(model_path=model_path)
         self.model, self.tokenizer = self.ml.loader(
             num_gpus, load_8bit=ISLOAD_8BIT, debug=ISDEBUG
         )
 
         if not isinstance(self.model, str):
-            if hasattr(self.model.config, "max_sequence_length"):
+            if hasattr(self.model, "config") and hasattr(
+                self.model.config, "max_sequence_length"
+            ):
                 self.context_len = self.model.config.max_sequence_length
-            elif hasattr(self.model.config, "max_position_embeddings"):
+            elif hasattr(self.model, "config") and hasattr(
+                self.model.config, "max_position_embeddings"
+            ):
                 self.context_len = self.model.config.max_position_embeddings
 
         else:
@@ -49,6 +57,9 @@ class ModelWorker:
 
         self.llm_chat_adapter = get_llm_chat_adapter(model_path)
         self.generate_stream_func = self.llm_chat_adapter.get_generate_stream_func()
+
+    def start_check(self):
+        print("LLM Model Loading Success！")
 
     def get_queue_length(self):
         if (
@@ -66,28 +77,60 @@ class ModelWorker:
 
     def generate_stream_gate(self, params):
         try:
+            # params adaptation
+            params, model_context = self.llm_chat_adapter.model_adaptation(params)
             for output in self.generate_stream_func(
                 self.model, self.tokenizer, params, DEVICE, CFG.MAX_POSITION_EMBEDDINGS
             ):
+                # Please do not open the output in production!
+                # The gpt4all thread shares stdout with the parent process,
+                # and opening it may affect the frontend output.
                 print("output: ", output)
-                ret = {
-                    "text": output,
-                    "error_code": 0,
-                }
+                # return some model context to dgt-server
+                ret = {"text": output, "error_code": 0, "model_context": model_context}
                 yield json.dumps(ret).encode() + b"\0"
 
         except torch.cuda.CudaError:
             ret = {"text": "**GPU OutOfMemory, Please Refresh.**", "error_code": 0}
+            yield json.dumps(ret).encode() + b"\0"
+        except Exception as e:
+            ret = {
+                "text": f"**LLMServer Generate Error, Please CheckErrorInfo.**: {e}",
+                "error_code": 0,
+            }
             yield json.dumps(ret).encode() + b"\0"
 
     def get_embeddings(self, prompt):
         return get_embeddings(self.model, self.tokenizer, prompt)
 
 
+model_path = LLM_MODEL_CONFIG[CFG.LLM_MODEL]
+worker = ModelWorker(
+    model_path=model_path, model_name=CFG.LLM_MODEL, device=DEVICE, num_gpus=1
+)
+
 app = FastAPI()
+# from pilot.openapi.knowledge.knowledge_controller import router
+#
+# app.include_router(router)
+#
+# origins = [
+#     "http://localhost",
+#     "http://localhost:8000",
+#     "http://localhost:3000",
+# ]
+#
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=origins,
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 
 class PromptRequest(BaseModel):
+    messages: List[ModelMessage]
     prompt: str
     temperature: float
     max_new_tokens: int
@@ -128,24 +171,23 @@ async def api_generate_stream(request: Request):
 
 
 @app.post("/generate")
-def generate(prompt_request: PromptRequest):
+def generate(prompt_request: PromptRequest) -> str:
     params = {
+        "messages": prompt_request.messages,
         "prompt": prompt_request.prompt,
         "temperature": prompt_request.temperature,
         "max_new_tokens": prompt_request.max_new_tokens,
         "stop": prompt_request.stop,
     }
 
-    response = []
     rsp_str = ""
     output = worker.generate_stream_gate(params)
     for rsp in output:
         # rsp = rsp.decode("utf-8")
-        rsp_str = str(rsp, "utf-8")
-        print("[TEST: output]:", rsp_str)
-        response.append(rsp_str)
+        rsp = rsp.replace(b"\0", b"")
+        rsp_str = rsp.decode()
 
-    return {"response": rsp_str}
+    return rsp_str
 
 
 @app.post("/embedding")
@@ -157,11 +199,4 @@ def embeddings(prompt_request: EmbeddingRequest):
 
 
 if __name__ == "__main__":
-    model_path = LLM_MODEL_CONFIG[CFG.LLM_MODEL]
-    print(model_path, DEVICE)
-
-    worker = ModelWorker(
-        model_path=model_path, model_name=CFG.LLM_MODEL, device=DEVICE, num_gpus=1
-    )
-
     uvicorn.run(app, host="0.0.0.0", port=CFG.MODEL_PORT, log_level="info")

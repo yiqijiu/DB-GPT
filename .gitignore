@@ -21,14 +21,15 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
-models
+
 var/
 wheels/
 models/
+plugins/
+
 pip-wheel-metadata/
 share/python-wheels/
 *.egg-info/
@@ -41,12 +42,13 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
-
+*.zuo
+*.zip
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Unit test / coverage reports
+# Unit test_py / coverage reports
 htmlcov/
 .tox/
 .nox/
@@ -145,3 +147,4 @@ pilot/nltk_data
 
 logswebserver.log.*
 .history/*
+.plugin_env

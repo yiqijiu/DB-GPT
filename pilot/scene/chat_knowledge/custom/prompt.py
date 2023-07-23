@@ -38,7 +38,7 @@ PROMPT_SEP = SeparatorStyle.SINGLE.value
 PROMPT_NEED_NEED_STREAM_OUT = True
 
 prompt = PromptTemplate(
-    template_scene=ChatScene.ChatNewKnowledge.value,
+    template_scene=ChatScene.ChatNewKnowledge.value(),
     input_variables=["context", "question"],
     response_format=None,
     template_define=PROMPT_SCENE_DEFINE,
@@ -49,5 +49,4 @@ prompt = PromptTemplate(
     ),
 )
 
-
-CFG.prompt_templates.update({prompt.template_scene: prompt})
+CFG.prompt_template_registry.register(prompt, language=CFG.LANGUAGE, is_default=True)
